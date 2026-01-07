@@ -56,7 +56,7 @@ const App = () => {
   const [aiMode, setAiMode] = useState('general');
 
   // --- TU CLAVE AQUÍ ---
-const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IAOCuJ2_tZ3w";
+const apiKey = import.meta.env.VISTE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IAOCuJ2_tZ3w";
 
   // --- CARGA DE DATOS ---
   const [patients, setPatients] = useState(() => {
