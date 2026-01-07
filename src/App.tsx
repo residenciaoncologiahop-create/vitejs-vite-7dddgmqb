@@ -71,7 +71,7 @@ const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IA
   // --- 🧠 CEREBRO: LLAMADA A GEMINI ---
   const callGeminiRaw = async (prompt, system) => {
     if (!apiKey) throw new Error('Falta API Key');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${AIzaSyAzyv3Q0kWalCEubzQ85P8IAOCuJ2_tZ3w}`;
     const payload = {
       contents: [{ parts: [{ text: prompt }] }],
       systemInstruction: { parts: [{ text: system }] },
