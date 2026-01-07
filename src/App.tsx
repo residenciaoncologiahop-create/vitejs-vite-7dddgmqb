@@ -55,8 +55,9 @@ const App = () => {
   const [showAiModal, setShowAiModal] = useState(false);
   const [aiMode, setAiMode] = useState('general');
 
-  // --- TU CLAVE AQUÍ ---
-const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IAOCuJ2_tZ3w";
+  // --- TU CLAVE AQUÍ (Corrección: Usamos import.meta o el string si falla) ---
+  const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IAOCuJ2_tZ3w";
+
   // --- CARGA DE DATOS ---
   const [patients, setPatients] = useState(() => {
     const saved = localStorage.getItem('oncoflow_full_v1');
@@ -71,7 +72,10 @@ const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IA
   // --- 🧠 CEREBRO: LLAMADA A GEMINI ---
   const callGeminiRaw = async (prompt, system) => {
     if (!apiKey) throw new Error('Falta API Key');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${AIzaSyAzyv3Q0kWalCEubzQ85P8IAOCuJ2_tZ3w}`;
+    
+    // CORRECCIÓN CRÍTICA: Usamos la variable apiKey, no el texto suelto sin comillas
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    
     const payload = {
       contents: [{ parts: [{ text: prompt }] }],
       systemInstruction: { parts: [{ text: system }] },
@@ -83,7 +87,11 @@ const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IA
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!response.ok) throw new Error('Error en Gemini API');
+    
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'Error en Gemini API');
+    }
     const data = await response.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text;
   };
@@ -197,7 +205,8 @@ const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IA
     setAiResult(null);
     setShowAiModal(true);
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+      // CORRECCIÓN: Usamos modelo estable 1.5-flash y la variable apiKey correcta
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
       const payload = {
         contents: [{ parts: [{ text: prompt }] }],
         systemInstruction: {
@@ -215,9 +224,9 @@ const apiKey = import.meta.env.VITE_GEMINI_KEY || "AIzaSyAzyv3Q0kWalCEubzQ85P8IA
         body: JSON.stringify(payload),
       });
       const data = await response.json();
-      setAiResult(data.candidates?.[0]?.content?.parts?.[0]?.text);
+      setAiResult(data.candidates?.[0]?.content?.parts?.[0]?.text || "No se obtuvo respuesta.");
     } catch (e) {
-      setAiResult('Error al conectar.');
+      setAiResult('Error al conectar con IA.');
     } finally {
       setAiLoading(false);
     }
