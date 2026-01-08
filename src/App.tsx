@@ -5,10 +5,13 @@ import {
   Activity, FileText, FileUp
 } from 'lucide-react';
 
-/* ================= CONFIGURACIÓN GEMINI ================= */
+/* ================= CONFIGURACIÓN GEMINI (CORAZÓN DEL SISTEMA) ================= */
 
-const MODEL_ID = 'gemini-1.0-pro';
-const API_KEY = import.meta.env.VITE_GEMINI_KEY;
+// Usamos el modelo 1.5 Flash que es más rápido y estable para PDFs
+const MODEL_ID = 'gemini-1.5-flash'; 
+
+// AQUÍ ES LA INTERVENCIÓN: PEGA TU CLAVE DENTRO DE LAS COMILLAS
+const API_KEY = "AIzaSyA6pACtF4j_FhNxWF2RDfT1LiRGNGuDa6Q"; 
 
 /* ================= CONTEXTO NCCN ================= */
 
@@ -50,14 +53,16 @@ export default function App() {
   /* ================= GEMINI CORE ================= */
 
   const callGemini = async (prompt, systemPrompt) => {
-    if (!API_KEY) throw new Error('API KEY no configurada');
+    // Validación de seguridad para que no falle silenciosamente
+    if (!API_KEY || API_KEY.includes("PEGAR_TU_CLAVE")) {
+        throw new Error('¡Falta pegar la API KEY en el código!');
+    }
 
-    const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_ID}:generateContent?key=${API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${API_KEY}`;
 
     const payload = {
       contents: [
-        { role: 'user', parts: [{ text: systemPrompt }] },
-        { role: 'user', parts: [{ text: prompt }] }
+        { role: 'user', parts: [{ text: systemPrompt + "\n" + prompt }] }
       ],
       generationConfig: { temperature: 0.2 }
     };
@@ -114,178 +119,24 @@ export default function App() {
       setIsImporting(true);
       setImportStatus('Leyendo PDF...');
       const text = await extractTextFromPDF(file);
+      
+      setImportStatus('Analizando con IA...');
 
       const prompt = `
-Extrae la información clínica COMPLETA.
-Formato JSON ESTRICTO:
+Extrae la información clínica COMPLETA de este texto.
+Formato JSON ESTRICTO (sin markdown, solo json):
 {
-  "name": "",
-  "diagnosis": "",
-  "clinicalNotes": "",
+  "name": "Nombre Paciente",
+  "diagnosis": "Diagnóstico",
+  "clinicalNotes": "Resumen breve",
   "timeline": [
-    { "date": "YYYY-MM-DD", "type": "Consulta", "note": "" }
+    { "date": "YYYY-MM-DD", "type": "Consulta/Quimio/Imagen", "note": "Detalle" }
   ]
 }
 Texto:
 ${text}
 `;
 
-      const json = await callGemini(prompt, 'Eres auditor médico.');
-      const data = JSON.parse(json);
-
-      setPatients([
-        { id: Date.now(), ...data },
-        ...patients
-      ]);
-
-      alert('✅ Paciente importado');
-    } catch (err) {
-      alert('Error: ' + err.message);
-    } finally {
-      setIsImporting(false);
-      setImportStatus('');
-      fileInputRef.current.value = '';
-    }
-  };
-
-  /* ================= IA ================= */
-
-  const consultAI = async (prompt, system) => {
-    setAiLoading(true);
-    setShowAiModal(true);
-    try {
-      const text = await callGemini(prompt, system);
-      setAiResult(text);
-    } catch (e) {
-      setAiResult('Error: ' + e.message);
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  /* ================= UI ================= */
-
-  const filtered = patients.filter(p =>
-    p.name?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  return (
-    <div className="max-w-md mx-auto h-screen bg-slate-50">
-      {activeTab === 'dashboard' && (
-        <div className="p-4 space-y-4">
-          <header className="flex justify-between items-center">
-            <h1 className="font-bold text-xl">OncoFlow</h1>
-            <button
-              onClick={() => fileInputRef.current.click()}
-              className="bg-slate-900 text-white px-3 py-2 rounded-lg text-sm"
-            >
-              {isImporting ? importStatus : 'Subir PDF'}
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              className="hidden"
-              accept=".pdf"
-              onChange={handleFileUpload}
-            />
-          </header>
-
-          <input
-            className="w-full p-3 rounded-xl border"
-            placeholder="Buscar paciente..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
-
-          {filtered.map(p => (
-            <div
-              key={p.id}
-              className="bg-white p-4 rounded-xl shadow flex justify-between cursor-pointer"
-              onClick={() => {
-                setSelectedPatient(p);
-                setActiveTab('detail');
-              }}
-            >
-              <div>
-                <h3 className="font-bold">{p.name}</h3>
-                <p className="text-xs text-slate-500">{p.diagnosis}</p>
-              </div>
-              <ChevronRight />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {activeTab === 'detail' && selectedPatient && (
-        <div className="p-4 space-y-4">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className="flex gap-2 text-sm"
-          >
-            <ArrowLeft /> Volver
-          </button>
-
-          <h2 className="text-xl font-bold">{selectedPatient.name}</h2>
-          <p className="text-sm">{selectedPatient.diagnosis}</p>
-
-          <div className="flex gap-2">
-            <button
-              onClick={() =>
-                consultAI(
-                  `Audita este caso:\n${selectedPatient.clinicalNotes}`,
-                  `Guías NCCN:\n${NCCN_GUIDELINES_TEXT}`
-                )
-              }
-              className="flex-1 bg-indigo-600 text-white p-2 rounded-lg"
-            >
-              NCCN
-            </button>
-
-            <button
-              onClick={() =>
-                consultAI(
-                  `Redacta historia clínica formal:\n${JSON.stringify(selectedPatient.timeline)}`,
-                  'Eres médico redactor.'
-                )
-              }
-              className="flex-1 bg-emerald-600 text-white p-2 rounded-lg"
-            >
-              Resumen
-            </button>
-          </div>
-
-          <button
-            onClick={() =>
-              confirm('¿Eliminar paciente?') &&
-              setPatients(patients.filter(p => p.id !== selectedPatient.id)) &&
-              setActiveTab('dashboard')
-            }
-            className="text-red-500 text-sm"
-          >
-            Eliminar
-          </button>
-        </div>
-      )}
-
-      {showAiModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-xl p-4">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="font-bold flex gap-2">
-                <Sparkles /> IA
-              </h3>
-              <button onClick={() => setShowAiModal(false)}>
-                <X />
-              </button>
-            </div>
-            {aiLoading ? (
-              <Loader2 className="animate-spin mx-auto" />
-            ) : (
-              <pre className="whitespace-pre-wrap text-sm">{aiResult}</pre>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+      const jsonString = await callGemini(prompt, 'Eres un auditor médico experto. Responde SOLO en JSON.');
+      
+      // Limpieza por si la IA devuelve bloques de código ```json ...
