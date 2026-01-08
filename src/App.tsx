@@ -7,7 +7,7 @@ import {
 
 /* ================= CONFIGURACIÓN GEMINI ================= */
 
-const MODEL_ID = 'gemini-1.5-flash';
+const MODEL_ID = 'gemini-1.0-pro';
 const API_KEY = import.meta.env.VITE_GEMINI_KEY;
 
 /* ================= CONTEXTO NCCN ================= */
