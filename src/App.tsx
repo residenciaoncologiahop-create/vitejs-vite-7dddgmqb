@@ -1,316 +1,291 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  User, Calendar, FileText, Search, Plus, ChevronRight, Clock, ArrowLeft,
-  Filter, Sparkles, Loader2, MessageSquare, X, Save, Trash2, ShieldCheck,
-  Activity, FileUp, AlertTriangle, ArrowDown,
+  Search, Plus, ChevronRight, ArrowLeft,
+  Sparkles, Loader2, X, Trash2, ShieldCheck,
+  Activity, FileText, FileUp
 } from 'lucide-react';
 
-// --- GUÍAS NCCN (Contexto) ---
+/* ================= CONFIGURACIÓN GEMINI ================= */
+
+const MODEL_ID = 'gemini-1.5-flash';
+const API_KEY = import.meta.env.VITE_GEMINI_KEY;
+
+/* ================= CONTEXTO NCCN ================= */
+
 const NCCN_GUIDELINES_TEXT = `
 REFERENCIA: GUÍAS NCCN 2025.
-1. DIGESTIVOS: Ca. Anal (Nigro), Recto (TNT), Colon (FOLFOX), Páncreas (FOLFIRINOX).
-2. PULMÓN: Inmunoterapia (Pembrolizumab) si PD-L1 >1% o 50%.
-3. GINECOLOGÍA: Cérvix (Cisplatino + Pembro).
+- Colon: FOLFOX / CAPOX
+- Recto: TNT
+- Pulmón: Inmunoterapia si PD-L1 ≥1%
+- Mama: Endocrino ± CDK4/6
 `;
 
-const App = () => {
+/* ================= APP ================= */
+
+export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [patients, setPatients] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const fileInputRef = useRef(null);
-  const [newEvent, setNewEvent] = useState({
-    date: new Date().toISOString().split('T')[0],
-    type: 'Consulta',
-    note: '',
-  });
-  const [showEventForm, setShowEventForm] = useState(false);
+
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState(null);
+  const [aiResult, setAiResult] = useState('');
   const [showAiModal, setShowAiModal] = useState(false);
   const [aiMode, setAiMode] = useState('general');
 
-  // --- 🔑 TU LLAVE MAESTRA ---
-  // IMPORTANTE: Reemplaza el texto entre comillas con tu NUEVA llave de AI Studio
-  const API_KEY = import.meta.env.VITE_GEMINI_KEY || "AIzaSyA6pACtF4j_FhNxWF2RDfT1LiRGNGuDa6Q";
-
-  // --- CARGA DE DATOS ---
-  const [patients, setPatients] = useState(() => {
-    const saved = localStorage.getItem('oncoflow_full_v1');
-    if (saved) return JSON.parse(saved);
-    return [];
-  });
+  /* ================= PERSISTENCIA ================= */
 
   useEffect(() => {
-    localStorage.setItem('oncoflow_full_v1', JSON.stringify(patients));
+    const saved = localStorage.getItem('oncoflow_data');
+    if (saved) setPatients(JSON.parse(saved));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('oncoflow_data', JSON.stringify(patients));
   }, [patients]);
 
-  // --- 🧠 CEREBRO: LLAMADA A GEMINI ---
-  const callGeminiRaw = async (prompt, system) => {
-    if (!API_KEY || API_KEY.includes("PEGAR_AQUI")) throw new Error('Falta API Key válida');
-    
-    // Corrección: Usamos la variable API_KEY. 
-    // Si da error 404 es porque la llave no tiene permisos, crea una nueva en AI Studio.
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
-    
+  /* ================= GEMINI CORE ================= */
+
+  const callGemini = async (prompt, systemPrompt) => {
+    if (!API_KEY) throw new Error('API KEY no configurada');
+
+    const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_ID}:generateContent?key=${API_KEY}`;
+
     const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      systemInstruction: { parts: [{ text: system }] },
-      generationConfig: { responseMimeType: 'application/json' },
+      contents: [
+        { role: 'user', parts: [{ text: systemPrompt }] },
+        { role: 'user', parts: [{ text: prompt }] }
+      ],
+      generationConfig: { temperature: 0.2 }
     };
 
-    const response = await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payload)
     });
-    
-    if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error?.message || 'Error de conexión con Gemini');
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'Error Gemini');
     }
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
   };
 
-  // --- 👀 OJOS: EXTRACCIÓN DE TEXTO DEL PDF ---
+  /* ================= PDF ================= */
+
   const extractTextFromPDF = async (file) => {
     if (!window.pdfjsLib) {
-      setImportStatus('Cargando motor PDF...');
       await new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
       });
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
 
-    setImportStatus('Leyendo documento completo...');
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = '';
+    const buffer = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+
+    let text = '';
     for (let i = 1; i <= pdf.numPages; i++) {
-      setImportStatus(`Leyendo página ${i} de ${pdf.numPages}...`);
       const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item) => item.str).join(' ');
-      fullText += ` --- PÁGINA ${i} --- \n ${pageText} \n`;
+      const content = await page.getTextContent();
+      text += content.items.map(i => i.str).join(' ') + '\n';
     }
-    return fullText;
+    return text;
   };
 
-  // --- PROCESO DE IMPORTACIÓN ---
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
+  /* ================= IMPORTAR PDF ================= */
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
     if (!file) return;
 
     try {
       setIsImporting(true);
+      setImportStatus('Leyendo PDF...');
       const text = await extractTextFromPDF(file);
-      setImportStatus('IA procesando historial completo...');
 
       const prompt = `
-        ANALIZA ESTA HISTORIA CLÍNICA.
-        INSTRUCCIONES CRÍTICAS:
-        1. NO RESUMAS LA CRONOLOGÍA. Extrae CADA evento (Consultas, Quimio, Imágenes).
-        2. Extrae Nombre y Diagnóstico.
-        3. Ordena del MÁS RECIENTE al MÁS ANTIGUO.
-        
-        TEXTO: ${text} 
+Extrae la información clínica COMPLETA.
+Formato JSON ESTRICTO:
+{
+  "name": "",
+  "diagnosis": "",
+  "clinicalNotes": "",
+  "timeline": [
+    { "date": "YYYY-MM-DD", "type": "Consulta", "note": "" }
+  ]
+}
+Texto:
+${text}
+`;
 
-        FORMATO JSON:
-        {
-          "name": "Apellido, Nombre",
-          "diagnosis": "Diagnóstico",
-          "stage": "Estadio",
-          "clinicalNotes": "Resumen...",
-          "timeline": [{ "date": "YYYY-MM-DD", "type": "Consulta", "note": "Detalle" }]
-        }
-      `;
+      const json = await callGemini(prompt, 'Eres auditor médico.');
+      const data = JSON.parse(json);
 
-      const jsonString = await callGeminiRaw(prompt, 'Eres auditor médico experto.');
-      const patientData = JSON.parse(jsonString);
+      setPatients([
+        { id: Date.now(), ...data },
+        ...patients
+      ]);
 
-      const newPatient = {
-        id: Date.now(),
-        ...patientData,
-        lastVisit: patientData.timeline?.[0]?.date || new Date().toISOString().split('T')[0],
-      };
-
-      setPatients([newPatient, ...patients]);
-      alert(`✅ ¡Importación completa para ${newPatient.name}!`);
-      setActiveTab('dashboard');
-    } catch (error) {
-      console.error(error);
-      alert('Error: ' + error.message);
+      alert('✅ Paciente importado');
+    } catch (err) {
+      alert('Error: ' + err.message);
     } finally {
       setIsImporting(false);
       setImportStatus('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      fileInputRef.current.value = '';
     }
   };
 
-  // --- LÓGICA GENERAL IA (CHAT) ---
-  const callGeminiChat = async (prompt, sys) => {
+  /* ================= IA ================= */
+
+  const consultAI = async (prompt, system) => {
     setAiLoading(true);
-    setAiResult(null);
     setShowAiModal(true);
     try {
-      if (!API_KEY || API_KEY.includes("PEGAR_AQUI")) throw new Error('API Key inválida');
-      
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
-      
-      const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        systemInstruction: {
-          parts: [{ text: sys + (aiMode === 'nccn' ? `\n${NCCN_GUIDELINES_TEXT}` : '') }],
-        },
-      };
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      
-      if (!response.ok) throw new Error('Error de conexión (404/400 check Key)');
-      
-      const data = await response.json();
-      setAiResult(data.candidates?.[0]?.content?.parts?.[0]?.text || "Sin respuesta.");
+      const text = await callGemini(prompt, system);
+      setAiResult(text);
     } catch (e) {
-      setAiResult(`Error: ${e.message}. Verifica tu API Key.`);
+      setAiResult('Error: ' + e.message);
     } finally {
       setAiLoading(false);
     }
   };
 
-  const consultNCCN = (p) => {
-    setAiMode('nccn');
-    callGeminiChat(`Audita este caso según NCCN:\nPaciente: ${p.name}\nDx: ${p.diagnosis}\nNotas: ${p.clinicalNotes}`, 'Eres auditor médico.');
-  };
+  /* ================= UI ================= */
 
-  const generateFullHistory = (p) => {
-    setAiMode('general');
-    const timelineTxt = p.timeline ? p.timeline.map((e) => `${e.date} (${e.type}): ${e.note}`).join('\n') : '';
-    callGeminiChat(`Genera Historia Clínica Formal basada en esto:\n${timelineTxt}`, 'Eres médico redactor.');
-  };
-
-  const addTimelineEvent = () => {
-    if (!selectedPatient || !newEvent.note) return;
-    const updatedPatient = {
-      ...selectedPatient,
-      timeline: [newEvent, ...(selectedPatient.timeline || [])].sort((a, b) => new Date(b.date) - new Date(a.date)),
-    };
-    setPatients(patients.map((p) => (p.id === selectedPatient.id ? updatedPatient : p)));
-    setSelectedPatient(updatedPatient);
-    setShowEventForm(false);
-  };
-
-  const deletePatient = (id) => {
-    if (confirm('¿Eliminar?')) setPatients(patients.filter((p) => p.id !== id));
-    setActiveTab('dashboard');
-  };
-
-  // --- VISTAS ---
-  const Dashboard = () => {
-    const filtered = patients.filter((p) => p.name?.toLowerCase().includes(searchQuery.toLowerCase()));
-    return (
-      <div className="p-4 space-y-6 pb-24">
-        <header className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-          <div><h1 className="text-xl font-bold text-slate-800">OncoFlow</h1><p className="text-slate-500 text-xs">Historial Completo</p></div>
-          <div className="flex gap-2">
-            <button onClick={() => fileInputRef.current.click()} disabled={isImporting} className="bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg active:scale-95 transition-transform disabled:opacity-50">
-              {isImporting ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} />}
-              {isImporting ? importStatus : 'Subir PDF'}
-            </button>
-            <input type="file" ref={fileInputRef} className="hidden" accept=".pdf" onChange={handleFileUpload} />
-          </div>
-        </header>
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-          <input type="text" placeholder="Buscar..." className="w-full pl-12 pr-4 py-4 rounded-2xl bg-white border border-slate-200 outline-none shadow-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-        </div>
-        <div className="space-y-3">
-          {filtered.length === 0 && <div className="text-center text-slate-400 py-10 text-sm">Sin pacientes. ¡Sube un PDF!</div>}
-          {filtered.map((p) => (
-            <div key={p.id} onClick={() => { setSelectedPatient(p); setActiveTab('detail'); }} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between active:scale-95 transition-transform cursor-pointer">
-              <div className="flex gap-4 items-center">
-                <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">{p.name ? p.name.charAt(0) : '?'}</div>
-                <div><h3 className="font-bold text-slate-800">{p.name}</h3><p className="text-xs text-slate-500">{p.diagnosis}</p></div>
-              </div>
-              <ChevronRight size={20} className="text-slate-300" />
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const PatientDetail = ({ p }) => (
-    <div className="flex flex-col h-screen bg-slate-50">
-      <div className="bg-slate-900 text-white p-6 pt-10 rounded-b-[2.5rem] shadow-xl z-20 shrink-0">
-        <button onClick={() => setActiveTab('dashboard')} className="mb-4 flex items-center gap-2 text-slate-300"><ArrowLeft size={20} /> Volver</button>
-        <h2 className="text-2xl font-bold">{p.name}</h2>
-        <div className="flex items-center gap-2 text-blue-200 text-sm mt-1"><Activity size={16} /> {p.diagnosis}</div>
-        <div className="flex gap-2 mt-6">
-          <button onClick={() => consultNCCN(p)} className="flex-1 bg-indigo-600 p-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg"><ShieldCheck size={16} /> NCCN</button>
-          <button onClick={() => generateFullHistory(p)} className="flex-1 bg-emerald-600 p-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg"><FileText size={16} /> Resumen</button>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto p-5 -mt-4 pt-8 z-10 scroll-smooth">
-        <div className="flex justify-between items-center mb-4 px-1 sticky top-0 bg-slate-50/95 backdrop-blur-sm py-2 z-10">
-          <h3 className="font-bold text-slate-700 flex items-center gap-2">Cronología <span className="text-xs bg-slate-200 px-2 py-0.5 rounded-full text-slate-500">{p.timeline?.length || 0} eventos</span></h3>
-          <button onClick={() => setShowEventForm(!showEventForm)} className="text-blue-600 text-xs font-bold bg-blue-50 px-3 py-1.5 rounded-full flex items-center gap-1">{showEventForm ? <X size={14} /> : <Plus size={14} />} Evolucionar</button>
-        </div>
-        {showEventForm && (
-          <div className="bg-white p-4 rounded-2xl shadow-lg border border-blue-100 mb-6">
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <input type="date" className="bg-slate-50 p-2 rounded-lg text-sm" value={newEvent.date} onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })} />
-              <select className="bg-slate-50 p-2 rounded-lg text-sm" value={newEvent.type} onChange={(e) => setNewEvent({ ...newEvent, type: e.target.value })}><option>Consulta</option><option>Quimioterapia</option><option>Imágenes</option><option>Cirugía</option></select>
-            </div>
-            <textarea className="w-full bg-slate-50 p-3 rounded-lg text-sm h-20 mb-3" placeholder="Nota..." value={newEvent.note} onChange={(e) => setNewEvent({ ...newEvent, note: e.target.value })} />
-            <button onClick={addTimelineEvent} className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold text-sm">Guardar</button>
-          </div>
-        )}
-        <div className="space-y-4 border-l-2 border-slate-200 ml-3 pl-6 pb-24 relative">
-          {p.timeline?.map((event, idx) => (
-            <div key={idx} className="relative group">
-              <div className={`absolute -left-[31px] top-0 w-4 h-4 rounded-full border-2 border-white shadow-sm transition-all group-hover:scale-125 ${event.type?.includes('Quim') ? 'bg-purple-500' : 'bg-blue-500'}`} />
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 group-hover:border-blue-200 transition-colors">
-                <div className="flex justify-between items-start mb-1"><span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase bg-slate-100 text-slate-600">{event.type}</span><span className="text-xs text-slate-400 font-medium">{event.date}</span></div>
-                <p className="text-sm text-slate-700 leading-relaxed">{event.note}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-        <button onClick={() => deletePatient(p.id)} className="w-full mb-8 text-red-400 text-xs font-bold flex justify-center gap-2"><Trash2 size={14} /> Borrar Historia</button>
-      </div>
-    </div>
-  );
-
-  const AiModal = () => (
-    <div className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-opacity ${showAiModal ? 'visible opacity-100' : 'invisible opacity-0'}`}>
-      <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] animate-in slide-in-from-bottom-5">
-        <div className="p-4 bg-slate-50 border-b flex justify-between items-center"><h3 className="font-bold text-slate-800 flex gap-2"><Sparkles size={18} className="text-purple-600" /> Resultado IA</h3><button onClick={() => setShowAiModal(false)}><X size={20} /></button></div>
-        <div className="p-6 overflow-y-auto flex-1 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-          {aiLoading ? <div className="text-center py-10"><Loader2 className="animate-spin mx-auto text-blue-500 mb-2" /> Procesando...</div> : aiResult}
-        </div>
-        {!aiLoading && <div className="p-4 border-t bg-slate-50"><button onClick={() => setShowAiModal(false)} className="w-full bg-slate-800 text-white py-3 rounded-xl font-bold">Cerrar</button></div>}
-      </div>
-    </div>
+  const filtered = patients.filter(p =>
+    p.name?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
-    <div className="max-w-md mx-auto h-screen bg-slate-50 font-sans flex flex-col shadow-2xl overflow-hidden relative">
-      <main className="flex-1 overflow-hidden h-full">
-        {activeTab === 'dashboard' && <Dashboard />}
-        {activeTab === 'detail' && <PatientDetail p={selectedPatient} />}
-      </main>
-      <AiModal />
+    <div className="max-w-md mx-auto h-screen bg-slate-50">
+      {activeTab === 'dashboard' && (
+        <div className="p-4 space-y-4">
+          <header className="flex justify-between items-center">
+            <h1 className="font-bold text-xl">OncoFlow</h1>
+            <button
+              onClick={() => fileInputRef.current.click()}
+              className="bg-slate-900 text-white px-3 py-2 rounded-lg text-sm"
+            >
+              {isImporting ? importStatus : 'Subir PDF'}
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              accept=".pdf"
+              onChange={handleFileUpload}
+            />
+          </header>
+
+          <input
+            className="w-full p-3 rounded-xl border"
+            placeholder="Buscar paciente..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+
+          {filtered.map(p => (
+            <div
+              key={p.id}
+              className="bg-white p-4 rounded-xl shadow flex justify-between cursor-pointer"
+              onClick={() => {
+                setSelectedPatient(p);
+                setActiveTab('detail');
+              }}
+            >
+              <div>
+                <h3 className="font-bold">{p.name}</h3>
+                <p className="text-xs text-slate-500">{p.diagnosis}</p>
+              </div>
+              <ChevronRight />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'detail' && selectedPatient && (
+        <div className="p-4 space-y-4">
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className="flex gap-2 text-sm"
+          >
+            <ArrowLeft /> Volver
+          </button>
+
+          <h2 className="text-xl font-bold">{selectedPatient.name}</h2>
+          <p className="text-sm">{selectedPatient.diagnosis}</p>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() =>
+                consultAI(
+                  `Audita este caso:\n${selectedPatient.clinicalNotes}`,
+                  `Guías NCCN:\n${NCCN_GUIDELINES_TEXT}`
+                )
+              }
+              className="flex-1 bg-indigo-600 text-white p-2 rounded-lg"
+            >
+              NCCN
+            </button>
+
+            <button
+              onClick={() =>
+                consultAI(
+                  `Redacta historia clínica formal:\n${JSON.stringify(selectedPatient.timeline)}`,
+                  'Eres médico redactor.'
+                )
+              }
+              className="flex-1 bg-emerald-600 text-white p-2 rounded-lg"
+            >
+              Resumen
+            </button>
+          </div>
+
+          <button
+            onClick={() =>
+              confirm('¿Eliminar paciente?') &&
+              setPatients(patients.filter(p => p.id !== selectedPatient.id)) &&
+              setActiveTab('dashboard')
+            }
+            className="text-red-500 text-sm"
+          >
+            Eliminar
+          </button>
+        </div>
+      )}
+
+      {showAiModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-xl p-4">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold flex gap-2">
+                <Sparkles /> IA
+              </h3>
+              <button onClick={() => setShowAiModal(false)}>
+                <X />
+              </button>
+            </div>
+            {aiLoading ? (
+              <Loader2 className="animate-spin mx-auto" />
+            ) : (
+              <pre className="whitespace-pre-wrap text-sm">{aiResult}</pre>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
-};
-
-export default App;
+}
